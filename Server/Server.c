@@ -1,7 +1,4 @@
-
-#include "Server.h"
-
-// Table 25.4			Echo  client program using TCP
+// Table 25.3			Echo server program using TCP
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,142 +10,165 @@
 #include <signal.h>
 #include <unistd.h>
 #include <string.h>
-//#include <arpa/innet.h> // inet -> innet !Error!
+//#include <arpa/innet.h> // inet -> innet !error!
 #include <arpa/inet.h>
 #include <sys/wait.h>
+#include <pthread.h>
 
-int main (int argc, char* argv[  ])		// Three arguments to be checked later
+// compile with -lpthread
+// gcc -o Table-25.3_new_th_v2 Table-25-3_new_th_v2.c -lpthread
+
+
+struct arg
+{
+         int new_sd;
+};
+
+
+void* client_thread(void* newClient)
+{
+	int n;
+	char buffer [256];				// Data buffer
+	int new_sd;
+	struct arg *my_arg;
+	my_arg = (struct arg *)newClient;
+	new_sd = my_arg->new_sd;
+	printf("Client thread. New socket descriptor: = %d \n", new_sd);
+
+	while(1)
+	{
+		// Data transfer section
+		if(( n = recv( new_sd, buffer, sizeof( buffer ), 0 ) ) <= 0 )
+		{
+			//printf("Socket descriptor:%d, recv", new_sd);
+            if( n == 0 )
+            {
+              printf( "Socket descriptor: %d hung up\n", new_sd );
+              break;
+            }
+            else
+            {
+            	printf( "Socket descriptor: %d\n", new_sd );
+            	perror("recv");
+            }
+		}
+		else
+		{
+			printf("Socket descriptor:%d, Recv %d byte \n", new_sd, n);
+		}
+		/*
+		while ((n = recv (s, ptr, maxLen, 0)) > 0)
+		{
+			//ptr + = n;			// Move pointer along the buffer
+			ptr += n;			// Move pointer along the buffer
+			//maxLen - = n;		// Adjust maximum number of bytes to receive
+			maxLen -= n;		// Adjust maximum number of bytes to receive
+			//len + = n;			// Update number of bytes received
+			len += n;			// Update number of bytes received
+		}
+		*/
+		int dataSend=0;
+		//dataSend = send (s, buffer, len, 0);		// Send back (echo) all bytes received
+		dataSend = send (new_sd, buffer, n, 0);		// Send back (echo) all bytes received
+		if(dataSend==-1)
+		{
+			printf("Socket descriptor:%d, dataSend==-1 \n", new_sd);
+			perror("send");
+		}
+		else
+		{
+			printf("Socket descriptor:%d, Send %d byte \n", new_sd, dataSend);
+		}
+	}
+
+
+	// Close the socket
+	printf("Close the socket:%d\n", new_sd);
+	close (new_sd);
+	pthread_exit; // end thread
+}
+
+
+int main (void)
 {
 	// Declare and define
-	int s;						// Socket descriptor
-	int  n;						// Number of bytes in each recv call
-	char* servName;				// Server name
-	int servPort;					// Server port number
-	char* string;					// String to be echoed
-	int len;						// Length of string to be echoed
-	char buffer [256 + 1];			// Buffer
-	char* ptr = buffer;    		// Pointer to move along the buffer
-	struct sockaddr_in serverAddr;	// Server socket address
-	int maxLen = 256; // !ADD!
-
-	// Check and set arguments
-	//if (argc != 3)
-	if (argc != 4)
-	{
-		printf ("Error: three arguments are needed!");
-		exit (1);
-	}
-	//servName = arg[1]; // !Error!
-	servName = argv[1];
-	//servPort = atoi(arg [2]); // !Error!
-	servPort = atoi(argv[2]);
-	//string = arg [3]; // !Error!
-	string = argv[3];
+	int ls;							// Listen socket descriptor (reference)
+	int s;							// socket descriptor (reference)
+	char buffer [256];				// Data buffer
+	char* ptr = buffer;				// Data buffer
+	int len = 0;						// Number of bytes to send or receive
+	int maxLen = sizeof (buffer);		// Maximum number of bytes to receive
+	int n = 0;						// Number of bytes for each recv call
+	int waitSize = 16;					// Size of waiting clients
+	struct sockaddr_in serverAddr;		// Server address
+	struct sockaddr_in clientAddr;		// Client address
+	//int clntAddrLen; 					// Length of client address
+	pthread_t id_thread;
+	struct arg my_arg;
 
 	struct sockaddr_in servAddr; // !ADD!
+	int SERV_PORT = 49999; // !ADD!
 
 
-	/*c
-	// Create socket
-	//if((s = socket (PF_INET, SOCK_STREAM, 0) < 0);
-	s = socket(AF_INET, SOCK_STREAM, 0);
-	if(s < 0)
+
+	// Create listen socket
+	//if (ls = socket (PF_INET, SOCK_STREAM, 0) < 0);
+	ls = socket (AF_INET, SOCK_STREAM, 0);
+	if (ls < 0)
 	{
-		perror ("Error: socket creation failed!");
+		perror ("Error: Listen socket failed!");
 		exit (1);
 	}
-	bd/*
 
-	// Create remote (server) socket address
-	//memset (&servAddr, 0, sizeof(servAddr));
-	memset (&servAddr, '0', sizeof(servAddr));
-	serverAddr.sin_family = AF_INET;
-	inet_pton (AF_INET, servName, &serverAddr.sin_addr); // Server IP address
-	serverAddr.sin_port = htons (servPort);		// Server port number
-*/
-	// Create socket
-    if((s = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        printf("\n Error : Could not create socket \n");
-        return 1;
-    }
-    /**/
-    // Create remote (server) socket address
-    memset(&servAddr, '0', sizeof(servAddr));
-    servAddr.sin_family = AF_INET;
-    servAddr.sin_port = htons(servPort);
+	// Create local (server) socket address
+	//memset (&servAddr, 0, sizeof (servAddr));
+	memset(&servAddr, '0', sizeof(servAddr));
+	servAddr.sin_family = AF_INET;
+	//servAddr.sin_addr.s_addr = htonl (INADDR_ANY);		// Default IP address
+	servAddr.sin_addr.s_addr = INADDR_ANY;		// Default IP address
+	servAddr.sin_port = htons (SERV_PORT); 			// Default port
+	memset( &( servAddr.sin_zero ), '\0', 8 );
 
-    if(inet_pton(AF_INET, argv[1], &servAddr.sin_addr)<=0)
-    {
-        printf("\n inet_pton error occured\n");
-        return 1;
-    }
-
-    // Connect  to the server
-    if( connect(s, (struct sockaddr *)&servAddr, sizeof(servAddr)) < 0)
-    {
-		perror ("Error: connection failed!");
-		exit (1);
-    }
-
-	// Connect  to the server
-	//if (connect (sd, (struct sockaddr*)&servAddr, sizeof(servAddr)) < 0);
-/*	if (connect (s, (struct sockaddr*)&servAddr, sizeof(servAddr)) < 0)
+	// Bind listen socket to the local socket address
+	//if (bind (ls, &servAddr, sizeof (servAddr)) < 0);
+	if (bind (ls, ( struct sockaddr * ) &servAddr, sizeof (servAddr)) < 0)
 	{
-
-		perror ("Error: connection failed!");
+		perror ("Error: binding failed!");
 		exit (1);
 	}
-	*/
-	printf("connect\n");
-	int dataSend=0;
-	// Data transfer section
-	//send (s, string, strlen(string), 0);
-	dataSend = send (s, string, strlen(string), 0);
-	//dataSend = send (s, "123", 4, 0);
-	if(dataSend==-1)
-	{
-		printf("dataSend==-1 \n");
-		perror("send");
-	}
-	else
-	{
-		printf("else \n");
-	}
-	printf("while \n");
 
-	if(( n = recv( s, buffer, sizeof( buffer ), 0 ) ) <= 0 )
+	// Listen to connection requests
+	//if (listen (ls, waitSize) < 0);
+	if (listen (ls, waitSize) < 0)
 	{
-		perror("recv");
-	}
-	else
-	{
-		printf("Recv %d byte \n", n);
+		perror ("Error: listening failed!");
+		exit (1);
 	}
 
-	/*
-	while ((n = recv (s, ptr, maxLen, 0)) > 0)
+	struct sockaddr_in clntAddr; // !ADD!
+    socklen_t clntAddrLen = sizeof(clntAddr); // !ADD!
+	//int clntAddrLen = sizeof(clntAddr); // !ADD!
+
+
+	// Handle the connection
+	for ( ; ; )		// Run forever
 	{
-		//ptr + = n;		// Move pointer along the buffer
-		ptr += n;		// Move pointer along the buffer
-		//maxLen - = n;	// Adjust the maximum number of bytes
-		maxLen -= n;	// Adjust the maximum number of bytes
-		len += n;		// Update the length of string received
-		printf("while1 \n");
-	} // End of while loop
-	*/
+		printf("\n\n-------------------------------\n");
+		// Accept connections from client
+		//if (s = accept (ls, &clntAddr, &clntAddrLen) < 0);
+		if ((s = accept (ls, (struct sockaddr *)&clntAddr, &clntAddrLen)) < 0)
+		{
+			//perror ("Error: accepting failed!);
+			perror ("Error: accepting failed!");
+			exit (1);
+		}
+		my_arg.new_sd = s;
+		printf("s = accept = %d \n", s);
+		printf("Accept\n");
+        // create a thread to handle request
+        errno = pthread_create(&id_thread, NULL, client_thread, (void*)&my_arg);
 
-	// Print and verify the echoed string
-	//buffer [len] = Â’\0Â’;
-	buffer [n] = '\0';
-	printf ("Echoed string received: \n");
-	fputs (buffer, stdout);
-	printf ("\n");
 
-	// Close socket
-	close (s);
+	} // End of for loop
 
-	// Stop program
-	exit (0);
-
-} // End of echo client program
+} // End of echo server program
